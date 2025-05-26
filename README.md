@@ -1,36 +1,147 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 프론트엔드 인프라 최적화 하기
 
-## Getting Started
+## 개요
 
-First, run the development server:
+1. Checkout 액션을 사용해 코드 내려받기
+2. `npm ci` 명령어로 프로젝트 의존성 설치
+3. `npm run build` 명령어로 Next.js 프로젝트 빌드
+4. AWS 자격 증명 구성
+5. 빌드된 파일을 S3 버킷에 동기화
+6. CloudFront 캐시 무효화
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 목표
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- s3, cloudfront, github action을 사용해서 next 프로젝트를 배포한다.
+- 워크 플로우에서 캐시 무효화가 어느 시점에서 동작하는지 알아본다.
+- 과제에서 사용된 것들의 개념을 정리한다.
+- CDN을 적용하기 전과 후의 성능보고서를 만든다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+</br>
+</br>
+</br>
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# 개념정리
 
-## Learn More
+### GitHub Actions과 CI/CD 도구
 
-To learn more about Next.js, take a look at the following resources:
+GitHub Actions는 GitHub에서 제공하는 **네이티브 CI/CD 도구**로, 개발자들이 코드 저장소에서 직접 빌드, 테스트, 배포를 자동화할 수 있게 해줍니다. **이벤트 기반**으로 동작하며, push, pull request, 이슈 생성 등 GitHub에서 발생하는 모든 웹훅 이벤트에 대응하여 워크플로우를 실행할 수 있습니다.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 핵심 특징
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **간편한 설정**: 별도의 하드웨어나 인스턴스 설정 없이 `.github/workflows` 디렉토리에 YAML 파일만 추가하면 됩니다
+- **플랫폼 독립성**: 모든 플랫폼, 언어, 클라우드 환경을 지원합니다
+- **커뮤니티 기반**: GitHub Marketplace에서 **11,000개 이상**의 사전 구축된 액션을 재사용할 수 있습니다
+- **호스팅 가상머신**: Ubuntu Linux, Windows, macOS 환경에서 코드를 빌드, 테스트, 배포할 수 있습니다
 
-## Deploy on Vercel
+### CI/CD 파이프라인 구성요소
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| 구성요소          | 설명                                    |
+| ----------------- | --------------------------------------- |
+| **워크플로우**    | 자동화된 프로세스를 정의하는 YAML 파일  |
+| **잡(Jobs)**      | 워크플로우 내에서 실행되는 작업 단위    |
+| **스텝(Steps)**   | 잡 내에서 순차적으로 실행되는 개별 작업 |
+| **액션(Actions)** | 재사용 가능한 코드 단위                 |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+</br>
+</br>
+</br>
+
+## S3와 스토리지
+
+Amazon S3(Simple Storage Service)는 **객체 스토리지 서비스**로, 업계 최고 수준의 확장성, 데이터 가용성, 보안, 성능을 제공합니다. 웹 애플리케이션, 모바일 앱, 데이터 레이크 등 다양한 용도로 사용됩니다.
+
+### 핵심 개념
+
+- **객체(Objects)**: 파일과 해당 파일을 설명하는 메타데이터로 구성됩니다
+- **버킷(Buckets)**: 객체를 담는 컨테이너로, 고유한 이름과 AWS 리전을 가집니다
+- **키(Key)**: 버킷 내에서 객체를 고유하게 식별하는 이름입니다
+
+### 주요 특징
+
+- **무제한 확장성**: 엑사바이트까지 데이터 저장 가능하며, 개별 객체는 최대 **5TB**까지 지원합니다
+- **높은 내구성**: **99.999999999%(11 nines)**의 데이터 내구성을 제공합니다
+- **다양한 스토리지 클래스**: 액세스 패턴에 따라 비용을 최적화할 수 있는 여러 스토리지 클래스를 제공합니다
+- **보안**: 기본적으로 암호화되며, 버킷 정책, IAM 정책, ACL 등으로 접근을 제어할 수 있습니다
+
+</br>
+</br>
+</br>
+
+## CloudFront와 CDN
+
+Amazon CloudFront는 전 세계에 분산된 **엣지 로케이션 네트워크**를 통해 정적 및 동적 웹 콘텐츠의 배포를 가속화하는 **CDN(Content Delivery Network)** 서비스입니다. 사용자의 지리적 위치에서 가장 가까운 엣지 서버에서 콘텐츠를 제공하여 지연 시간을 최소화합니다.
+
+### CDN 작동 원리
+
+- **캐싱**: 정적 웹 콘텐츠의 복사본을 여러 서버에 저장하여 빠른 데이터 액세스를 제공합니다
+- **동적 가속**: 중간 CDN 서버를 통해 동적 웹 콘텐츠 요청의 서버 응답 시간을 단축합니다
+- **엣지 로직 연산**: 엣지 서버에서 논리적 연산을 수행하여 클라이언트와 서버 간 통신을 최적화합니다
+
+### CloudFront 핵심 기능
+
+| 기능                   | 설명                                                           |
+| ---------------------- | -------------------------------------------------------------- |
+| **오리진 서버**        | S3 버킷이나 HTTP 서버 등 원본 콘텐츠를 저장하는 서버를 지정    |
+| **배포(Distribution)** | CloudFront가 콘텐츠를 가져올 오리진 서버를 지정하는 설정       |
+| **TTL 설정**           | 콘텐츠가 엣지 로케이션에 캐시되는 시간을 제어 (기본 24시간)    |
+| **도메인 이름**        | CloudFront가 제공하는 도메인 또는 사용자 정의 도메인 사용 가능 |
+
+</br>
+</br>
+</br>
+
+## 캐시 무효화(Cache Invalidation)
+
+캐시 무효화는 컴퓨터 시스템에서 **캐시의 항목을 교체하거나 제거**하는 프로세스입니다. 새로운 콘텐츠를 클라이언트에게 전달하기 위해 오래된 캐시 데이터를 업데이트하는 방법입니다.
+
+### 무효화 방법
+
+### **Purge**
+
+캐싱 프록시에서 콘텐츠를 즉시 제거합니다. 클라이언트가 다시 요청하면 애플리케이션에서 새로 가져와 캐시에 저장합니다.
+
+### **Refresh**
+
+캐시된 콘텐츠가 있어도 애플리케이션에서 새로운 콘텐츠를 가져와 기존 캐시를 교체합니다.
+
+### **Ban**
+
+캐시된 콘텐츠를 블랙리스트에 추가하여, 클라이언트 요청 시 새로운 콘텐츠를 가져오도록 합니다.
+
+### CloudFront 무효화 특징
+
+- **대소문자 구분**: 무효화 경로는 대소문자를 구분합니다
+- **전체 버전 무효화**: 파일을 무효화하면 쿠키나 헤더와 관련된 모든 캐시 버전이 무효화됩니다
+- **와일드카드 지원**: `/*` 패턴을 사용하여 모든 파일을 무효화할 수 있습니다
+
+</br>
+</br>
+</br>
+
+## Repository Secret과 환경변수
+
+GitHub Secrets는 **API 키, 토큰, 비밀번호** 같은 민감한 정보를 저장소에 안전하게 저장하는 기능입니다. 코드에 하드코딩하지 않고도 워크플로우에서 안전하게 사용할 수 있습니다.
+
+## Secret 유형
+
+| 유형                     | 범위        | 설명                                                           |
+| ------------------------ | ----------- | -------------------------------------------------------------- |
+| **Repository Secrets**   | 저장소 단위 | 특정 저장소에서만 사용 가능한 비밀 정보                        |
+| **Environment Secrets**  | 환경 단위   | 특정 환경(예: production, staging)에서만 사용 가능한 비밀 정보 |
+| **Organization Secrets** | 조직 단위   | 조직 전체에서 공유되는 비밀 정보                               |
+
+## 환경변수 설정
+
+- **전역 레벨**: 모든 잡에서 접근 가능한 환경변수를 설정할 수 있습니다
+- **잡 레벨**: 특정 잡에서만 접근 가능한 환경변수를 설정할 수 있습니다
+- **스텝 레벨**: 개별 스텝에서만 사용되는 환경변수를 설정할 수 있습니다
+
+## 보안 특징
+
+- **Libsodium 암호화**: GitHub은 **Libsodium sealed boxes**를 사용하여 비밀 정보를 암호화합니다
+- **제한된 접근**: 각 서비스(Dependabot, GitHub Actions, Codespaces)별로 접근 권한이 분리되어 있습니다
+- **크기 제한**: 비밀 정보는 최대 **48KB**까지 저장할 수 있습니다
+
+</br>
+</br>
+</br>
