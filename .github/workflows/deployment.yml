@@ -6,7 +6,7 @@ on:
   push:
     branches:
       - main # main 브랜치에 push될 때 자동 실행 (또는 master, 프로젝트의 기본 브랜치 이름에 맞게 조정)
-  workflow_dispatch: # GitHub UI에서 수동으로 워크플로우 실행 가능
+  workflow_dispatch: #  GitHub UI에서 수동으로 워크플로우 실행 가능
 
 # 실행할 작업(job) 정의
 jobs:
